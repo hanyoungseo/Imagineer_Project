@@ -1,27 +1,112 @@
+
+using System.Collections.Generic;
 using UnityEngine;
 
 public class SpawnModel : MonoBehaviour
 {
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
-    {
-        
-    }
+    [Header("Model Configuration")]
+    [SerializeField] private CardModelRegistry registry;
+    [SerializeField] private Transform modelParent;
 
-    // Update is called once per frame
-    void Update()
-    {
-        
-    }
+    private readonly Dictionary<string, GameObject> activeModels
+        = new Dictionary<string, GameObject>();
 
     public void SpawnCardModel(Vector3 pos, string id)
     {
-        Debug.Log($"Position: {pos}\nID: {id}");
-        // 카드 필드 배치시 해당 함수 알아서 호출
-        // prefabs 폴더 내부 모델을 인스턴스로 호출할 수 있도록 구성
-        // 인자로 전달받은 pos를 활용해 해당 위치에 모델을 소환
-        // id를 사용해 id마다 다른 모델 소환할 수 있도로 구성
+        SpawnCardModel(pos, Quaternion.identity, id);
     }
 
-    
+    public void SpawnCardModel(
+        Vector3 pos, Quaternion rotation, string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || registry == null)
+            return;
+
+        CardModelData data = registry.GetCardData(id);
+
+        if (data == null || data.modelPrefab == null)
+        {
+            Debug.LogWarning($"Unknown card ID: {id}");
+            return;
+        }
+
+        Vector3 spawnPosition = pos + rotation * data.positionOffset;
+
+        Quaternion spawnRotation =
+            rotation * Quaternion.Euler(data.rotationOffset);
+
+        if (activeModels.TryGetValue(id, out GameObject existing)
+            && existing != null)
+        {
+            CardModelController controller =
+                existing.GetComponent<CardModelController>();
+
+            if (controller != null)
+                controller.SetTargetPose(spawnPosition, spawnRotation);
+            else
+                existing.transform.SetPositionAndRotation(
+                    spawnPosition, spawnRotation);
+
+            return;
+        }
+
+        GameObject model = Instantiate(
+            data.modelPrefab,
+            spawnPosition,
+            spawnRotation,
+            modelParent
+        );
+
+        model.name = $"CardModel_{id}";
+        model.transform.localScale *= data.modelScale;
+
+        activeModels[id] = model;
+
+        CardBattleStatus status =
+            model.GetComponent<CardBattleStatus>();
+
+        if (status != null)
+            status.Initialize(data.maxHealth, data.attackPower);
+
+        CardSpawnEffect effect =
+            model.GetComponent<CardSpawnEffect>();
+
+        if (effect != null)
+            effect.PlaySpawnEffect();
+
+        CardGameEventManager.RaiseModelSpawned(id, model);
+
+        Debug.Log($"Model spawned: {id}");
+    }
+
+    public void RemoveCardModel(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return;
+
+        if (!activeModels.TryGetValue(id, out GameObject model))
+            return;
+
+        activeModels.Remove(id);
+
+        if (model != null)
+            Destroy(model);
+
+        CardGameEventManager.RaiseModelRemoved(id);
+    }
+
+    public bool IsModelSpawned(string id)
+    {
+        return !string.IsNullOrWhiteSpace(id)
+            && activeModels.TryGetValue(id, out GameObject model)
+            && model != null;
+    }
+
+    public void ClearAllModels()
+    {
+        List<string> ids = new List<string>(activeModels.Keys);
+
+        foreach (string id in ids)
+            RemoveCardModel(id);
+    }
 }
